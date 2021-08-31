@@ -30,6 +30,8 @@
 
 #include <tables/sin2048_int8.h> // sine table for oscillator
 #include <twi_nonblock.h>
+#include <EventDelay.h>
+#include <Smooth.h>
 
 #define CONTROL_RATE 128 // Hz, powers of 2 are most reliable
 
@@ -38,6 +40,20 @@ Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin2(SIN2048_DATA);
 
 float gain;
 float gain2;
+// for scheduling audio gain changes
+EventDelay kGainChangeDelay;
+const unsigned int gainChangeMsec = 20;
+
+//  for scheduling turning smoothing on and off
+EventDelay kSmoothOnOff;
+const unsigned int smoothOnOffMsec = 2000;
+
+float smoothness = 0.9975f;
+Smooth <long> aSmoothGain(smoothness);
+boolean smoothIsOn = true;
+long target_gain = 0;
+
+
 
 static volatile byte acc_status = 0;
 #define ACC_IDLE 0
@@ -56,7 +72,7 @@ int accbytedata[14];
 #define TEMP_LSB_2_DEGREE     340.0    // [bit/celsius]
 #define TEMP_LSB_OFFSET       12412.0
 
-void setup_accelero(){
+void setup_accelero() {
   initialize_twi_nonblock();
 
   acc_writeTo(MPU6050_SMPLRT_DIV_REGISTER, 0x00);
@@ -64,12 +80,12 @@ void setup_accelero(){
   acc_writeTo(MPU6050_GYRO_CONFIG_REGISTER, 0x00); //0x08
   acc_writeTo(MPU6050_ACCEL_CONFIG_REGISTER, 0x00);
   acc_writeTo(MPU6050_PWR_MGMT_1_REGISTER, 0x01);
-  
+
   acc_status = ACC_IDLE;
 }
 
 /// ---------- non-blocking version ----------
-void initiate_read_accelero(){
+void initiate_read_accelero() {
   // Reads num bytes starting from address register on device in to _buff array
   // set address of targeted slave
   txAddress = MPU6050_ADDR; //MMA7660_ADDR;
@@ -87,7 +103,7 @@ void initiate_read_accelero(){
   acc_status = ACC_WRITING;
 }
 
-void initiate_request_accelero(){
+void initiate_request_accelero() {
   // reset tx buffer iterator vars
   txBufferIndex = 0;
   txBufferLength = 0;
@@ -97,13 +113,13 @@ void initiate_request_accelero(){
 }
 
 void finalise_request_accelero() {
-  byte read = twi_readMasterBuffer( rxBuffer, 14 ); 
+  byte read = twi_readMasterBuffer( rxBuffer, 14 );
   // set rx buffer iterator vars
   rxBufferIndex = 0;
   rxBufferLength = read;
 
   byte i = 0;
-  while( rxBufferLength - rxBufferIndex > 0) { // device may send less than requested (abnormal)
+  while ( rxBufferLength - rxBufferIndex > 0) { // device may send less than requested (abnormal)
     accbytedata[i] = rxBuffer[rxBufferIndex];
     ++rxBufferIndex;
     i++;
@@ -122,13 +138,15 @@ void acc_writeTo(byte address, byte val) {
 }
 
 
-void setup(){
+void setup() {
   Serial.begin(115200);
   //while (!Serial) delay(10); // will pause Zero, Leonardo, etc until serial console opens
   setup_accelero();
+  kGainChangeDelay.set(gainChangeMsec);
+  kSmoothOnOff.set(smoothOnOffMsec);
   startMozzi(CONTROL_RATE);
   aSin.setFreq(250);
-  aSin2.setFreq(125);
+  aSin2.setFreq(500);
 }
 
 int accx;
@@ -142,55 +160,79 @@ int gyroz;
 unsigned long ms = millis();
 unsigned long readTime = ms;
 
-void updateControl(){
+void updateControl() {
   ms = millis();
   if (ms > readTime) {
     readTime += 20;
- 
-    switch( acc_status ){
-    case ACC_IDLE:
-      accx = (accbytedata[0] << 8 | accbytedata[1]) >> 7; // accelerometer x reading, reduced to 8 bit
-      accy = (accbytedata[2] << 8 | accbytedata[3]) >> 7; // accelerometer y reading, 8 bit
-      accz = (accbytedata[4] << 8 | accbytedata[5]) >> 7; // accelerometer z reading
-      temp = ((accbytedata[6] << 8 | accbytedata[7]) + TEMP_LSB_OFFSET) / TEMP_LSB_2_DEGREE;; // temperature reading
-      gyrox = (accbytedata[8] << 8 | accbytedata[9]) >> 7; // gyro x reading, reduced to 8 bit
-      gyroy = (accbytedata[10] << 8 | accbytedata[11]) >> 7; // gyro y reading, 8 bit
-      gyroz = (accbytedata[12] << 8 | accbytedata[13]) >> 7; // gyro z reading
-   //   Serial.print("aX ");Serial.print(accx);
-     // Serial.print("\taY ");Serial.print(accy);
-     // Serial.print("\taZ ");Serial.print(accz);
-     // Serial.print("\tTemp ");Serial.print(temp);
-     // Serial.print("\tgX ");Serial.print(gyrox);
-//      Serial.print("\tgY ");Serial.print(gyroy);
-//      Serial.print("\tgZ ");Serial.print(gyroz);
-//      Serial.println();
-      initiate_read_accelero();
-  
-//      aSin.setFreq(432 + accx * 4);
-      gain = sqrt(((accx* accx) + ( accy*accy)))/255.0;
-      gain2 = sqrt(((accx* accx) + ( accy*accy)))/255.0;
-      
-      break;
-    case ACC_WRITING:
-      if ( TWI_MTX != twi_state ){
-        initiate_request_accelero();
-      }
-      break;
-    case ACC_READING:
-      if ( TWI_MRX != twi_state ){
-        finalise_request_accelero();
-      }
-      break;
+
+    switch ( acc_status ) {
+      case ACC_IDLE:
+        accx = (accbytedata[0] << 8 | accbytedata[1]) >> 7; // accelerometer x reading, reduced to 8 bit
+        accy = (accbytedata[2] << 8 | accbytedata[3]) >> 7; // accelerometer y reading, 8 bit
+        accz = (accbytedata[4] << 8 | accbytedata[5]) >> 7; // accelerometer z reading
+        temp = ((accbytedata[6] << 8 | accbytedata[7]) + TEMP_LSB_OFFSET) / TEMP_LSB_2_DEGREE;; // temperature reading
+        gyrox = (accbytedata[8] << 8 | accbytedata[9]) >> 7; // gyro x reading, reduced to 8 bit
+        gyroy = (accbytedata[10] << 8 | accbytedata[11]) >> 7; // gyro y reading, 8 bit
+        gyroz = (accbytedata[12] << 8 | accbytedata[13]) >> 7; // gyro z reading
+        //   Serial.print("aX ");Serial.print(accx);
+        // Serial.print("\taY ");Serial.print(accy);
+        // Serial.print("\taZ ");Serial.print(accz);
+        // Serial.print("\tTemp ");Serial.print(temp);
+        // Serial.print("\tgX ");Serial.print(gyrox);
+        //      Serial.print("\tgY ");Serial.print(gyroy);
+        //      Serial.print("\tgZ ");Serial.print(gyroz);
+        //      Serial.println();
+        initiate_read_accelero();
+
+        //      aSin.setFreq(432 + accx * 4);
+
+        // switch smoothing on and off to show the difference
+//        if (kSmoothOnOff.ready()) {
+////          if (smoothIsOn) {
+////            aSmoothGain.setSmoothness(0.f);
+////            smoothIsOn = true;
+////          }
+////          else {
+////            aSmoothGain.setSmoothness(smoothness);
+////            smoothIsOn = true;
+////          }
+//          kSmoothOnOff.start();
+//        }
+
+        // random volume changes
+        if (kGainChangeDelay.ready()) {
+          target_gain = sqrt(((accx * accx) + ( accy * accy)))/2;
+          kGainChangeDelay.start();
+        }
+
+        gain = sqrt(((accx * accx) + ( accy * accy))) / 255.0;
+        gain2 = sqrt(((accx * accx) + ( accy * accy))) / 255.0;
+
+        break;
+      case ACC_WRITING:
+        if ( TWI_MTX != twi_state ) {
+          initiate_request_accelero();
+        }
+        break;
+      case ACC_READING:
+        if ( TWI_MRX != twi_state ) {
+          finalise_request_accelero();
+        }
+        break;
     }
   }
 }
 
 
-int16_t updateAudio(){
-  return (aSin.next() * gain)+(aSin2.next() * gain2); 
+//int16_t updateAudio() {
+//  return (aSin.next() * gain) + (aSin2.next() * gain2);
+//}
+
+
+AudioOutput_t updateAudio(){
+  return MonoOutput::from16Bit(aSmoothGain.next(target_gain) * (aSin.next() + aSin2.next()));
 }
 
-
-void loop(){
+void loop() {
   audioHook(); // required here
 }
