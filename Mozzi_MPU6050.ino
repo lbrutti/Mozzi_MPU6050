@@ -27,14 +27,17 @@
 
 #include <MozziGuts.h>
 #include <Oscil.h> // oscillator template
+
 #include <tables/sin2048_int8.h> // sine table for oscillator
 #include <twi_nonblock.h>
 
 #define CONTROL_RATE 128 // Hz, powers of 2 are most reliable
 
 Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin(SIN2048_DATA);
+Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin2(SIN2048_DATA);
 
 float gain;
+float gain2;
 
 static volatile byte acc_status = 0;
 #define ACC_IDLE 0
@@ -124,7 +127,8 @@ void setup(){
   //while (!Serial) delay(10); // will pause Zero, Leonardo, etc until serial console opens
   setup_accelero();
   startMozzi(CONTROL_RATE);
-  aSin.setFreq(800);
+  aSin.setFreq(250);
+  aSin2.setFreq(125);
 }
 
 int accx;
@@ -152,18 +156,19 @@ void updateControl(){
       gyrox = (accbytedata[8] << 8 | accbytedata[9]) >> 7; // gyro x reading, reduced to 8 bit
       gyroy = (accbytedata[10] << 8 | accbytedata[11]) >> 7; // gyro y reading, 8 bit
       gyroz = (accbytedata[12] << 8 | accbytedata[13]) >> 7; // gyro z reading
-      Serial.print("aX ");Serial.print(accx);
-      Serial.print("\taY ");Serial.print(accy);
-      Serial.print("\taZ ");Serial.print(accz);
-      Serial.print("\tTemp ");Serial.print(temp);
-      Serial.print("\tgX ");Serial.print(gyrox);
-      Serial.print("\tgY ");Serial.print(gyroy);
-      Serial.print("\tgZ ");Serial.print(gyroz);
-      Serial.println();
+   //   Serial.print("aX ");Serial.print(accx);
+     // Serial.print("\taY ");Serial.print(accy);
+     // Serial.print("\taZ ");Serial.print(accz);
+     // Serial.print("\tTemp ");Serial.print(temp);
+     // Serial.print("\tgX ");Serial.print(gyrox);
+//      Serial.print("\tgY ");Serial.print(gyroy);
+//      Serial.print("\tgZ ");Serial.print(gyroz);
+//      Serial.println();
       initiate_read_accelero();
   
-      aSin.setFreq(800 + accx * 4);
-      gain = 0.5 + accy / 255.0;
+//      aSin.setFreq(432 + accx * 4);
+      gain = sqrt(((accx* accx) + ( accy*accy)))/255.0;
+      gain2 = sqrt(((accx* accx) + ( accy*accy)))/255.0;
       
       break;
     case ACC_WRITING:
@@ -182,7 +187,7 @@ void updateControl(){
 
 
 int16_t updateAudio(){
-  return aSin.next() * gain; 
+  return (aSin.next() * gain)+(aSin2.next() * gain2); 
 }
 
 
