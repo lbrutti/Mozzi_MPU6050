@@ -26,30 +26,30 @@
 */
 
 #include <MozziGuts.h>
-#include <Oscil.h> // oscillator template
+#include <Oscil.h>  // oscillator template
 
-#include <tables/sin2048_int8.h> // sine table for oscillator
+#include <tables/sin2048_int8.h>  // sine table for oscillator
 #include <twi_nonblock.h>
 #include <EventDelay.h>
 #include <Smooth.h>
+#include <IntMap.h>
 
-#define CONTROL_RATE 128 // Hz, powers of 2 are most reliable
+#define CONTROL_RATE 256  // Hz, powers of 2 are most reliable
 
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin(SIN2048_DATA);
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin2(SIN2048_DATA);
+Oscil<SIN2048_NUM_CELLS, AUDIO_RATE> aSin(SIN2048_DATA);
+Oscil<SIN2048_NUM_CELLS, AUDIO_RATE> aSin2(SIN2048_DATA);
 
-float gain;
-float gain2;
+IntMap kMapGain(0, 127, 0, 255);
 // for scheduling audio gain changes
 EventDelay kGainChangeDelay;
 const unsigned int gainChangeMsec = 20;
 
 //  for scheduling turning smoothing on and off
-EventDelay kSmoothOnOff;
-const unsigned int smoothOnOffMsec = 2000;
+//EventDelay kSmoothOnOff;
+//const unsigned int smoothOnOffMsec = 2000;
 
 float smoothness = 0.9975f;
-Smooth <long> aSmoothGain(smoothness);
+Smooth<long> aSmoothGain(smoothness);
 boolean smoothIsOn = true;
 long target_gain = 0;
 
@@ -62,22 +62,22 @@ static volatile byte acc_status = 0;
 
 int accbytedata[14];
 
-#define MPU6050_ADDR                  0x68
-#define MPU6050_SMPLRT_DIV_REGISTER   0x19
-#define MPU6050_CONFIG_REGISTER       0x1a
-#define MPU6050_GYRO_CONFIG_REGISTER  0x1b
+#define MPU6050_ADDR 0x68
+#define MPU6050_SMPLRT_DIV_REGISTER 0x19
+#define MPU6050_CONFIG_REGISTER 0x1a
+#define MPU6050_GYRO_CONFIG_REGISTER 0x1b
 #define MPU6050_ACCEL_CONFIG_REGISTER 0x1c
-#define MPU6050_PWR_MGMT_1_REGISTER   0x6b
-#define MPU6050_ACCEL_OUT_REGISTER    0x3b
-#define TEMP_LSB_2_DEGREE     340.0    // [bit/celsius]
-#define TEMP_LSB_OFFSET       12412.0
+#define MPU6050_PWR_MGMT_1_REGISTER 0x6b
+#define MPU6050_ACCEL_OUT_REGISTER 0x3b
+#define TEMP_LSB_2_DEGREE 340.0  // [bit/celsius]
+#define TEMP_LSB_OFFSET 12412.0
 
 void setup_accelero() {
   initialize_twi_nonblock();
 
   acc_writeTo(MPU6050_SMPLRT_DIV_REGISTER, 0x00);
   acc_writeTo(MPU6050_CONFIG_REGISTER, 0x00);
-  acc_writeTo(MPU6050_GYRO_CONFIG_REGISTER, 0x00); //0x08
+  acc_writeTo(MPU6050_GYRO_CONFIG_REGISTER, 0x00);  //0x08
   acc_writeTo(MPU6050_ACCEL_CONFIG_REGISTER, 0x00);
   acc_writeTo(MPU6050_PWR_MGMT_1_REGISTER, 0x01);
 
@@ -88,13 +88,13 @@ void setup_accelero() {
 void initiate_read_accelero() {
   // Reads num bytes starting from address register on device in to _buff array
   // set address of targeted slave
-  txAddress = MPU6050_ADDR; //MMA7660_ADDR;
+  txAddress = MPU6050_ADDR;  //MMA7660_ADDR;
   // reset tx buffer iterator vars
   txBufferIndex = 0;
   txBufferLength = 0;
 
   // put byte in tx buffer
-  txBuffer[txBufferIndex] = MPU6050_ACCEL_OUT_REGISTER; // Start reading from register for X
+  txBuffer[txBufferIndex] = MPU6050_ACCEL_OUT_REGISTER;  // Start reading from register for X
   ++txBufferIndex;
   // update amount in buffer
   txBufferLength = txBufferIndex;
@@ -108,18 +108,18 @@ void initiate_request_accelero() {
   txBufferIndex = 0;
   txBufferLength = 0;
 
-  byte read = twi_initiateReadFrom(MPU6050_ADDR, 14); // 14 is the number of bytes to read
+  byte read = twi_initiateReadFrom(MPU6050_ADDR, 14);  // 14 is the number of bytes to read
   acc_status = ACC_READING;
 }
 
 void finalise_request_accelero() {
-  byte read = twi_readMasterBuffer( rxBuffer, 14 );
+  byte read = twi_readMasterBuffer(rxBuffer, 14);
   // set rx buffer iterator vars
   rxBufferIndex = 0;
   rxBufferLength = read;
 
   byte i = 0;
-  while ( rxBufferLength - rxBufferIndex > 0) { // device may send less than requested (abnormal)
+  while (rxBufferLength - rxBufferIndex > 0) {  // device may send less than requested (abnormal)
     accbytedata[i] = rxBuffer[rxBufferIndex];
     ++rxBufferIndex;
     i++;
@@ -131,9 +131,9 @@ void finalise_request_accelero() {
 
 // Writes val to address register on device
 void acc_writeTo(byte address, byte val) {
-  twowire_beginTransmission(MPU6050_ADDR); // start transmission to device
-  twowire_send( address );
-  twowire_send( val );
+  twowire_beginTransmission(MPU6050_ADDR);  // start transmission to device
+  twowire_send(address);
+  twowire_send(val);
   twowire_endTransmission();
 }
 
@@ -143,10 +143,10 @@ void setup() {
   //while (!Serial) delay(10); // will pause Zero, Leonardo, etc until serial console opens
   setup_accelero();
   kGainChangeDelay.set(gainChangeMsec);
-  kSmoothOnOff.set(smoothOnOffMsec);
-  startMozzi(CONTROL_RATE);
+  //  kSmoothOnOff.set(smoothOnOffMsec);
   aSin.setFreq(250);
   aSin2.setFreq(500);
+  startMozzi(CONTROL_RATE);
 }
 
 int accx;
@@ -165,57 +165,58 @@ void updateControl() {
   if (ms > readTime) {
     readTime += 20;
 
-    switch ( acc_status ) {
+    switch (acc_status) {
       case ACC_IDLE:
-        accx = (accbytedata[0] << 8 | accbytedata[1]) >> 7; // accelerometer x reading, reduced to 8 bit
-        accy = (accbytedata[2] << 8 | accbytedata[3]) >> 7; // accelerometer y reading, 8 bit
-        accz = (accbytedata[4] << 8 | accbytedata[5]) >> 7; // accelerometer z reading
-        temp = ((accbytedata[6] << 8 | accbytedata[7]) + TEMP_LSB_OFFSET) / TEMP_LSB_2_DEGREE;; // temperature reading
-        gyrox = (accbytedata[8] << 8 | accbytedata[9]) >> 7; // gyro x reading, reduced to 8 bit
-        gyroy = (accbytedata[10] << 8 | accbytedata[11]) >> 7; // gyro y reading, 8 bit
-        gyroz = (accbytedata[12] << 8 | accbytedata[13]) >> 7; // gyro z reading
-        //   Serial.print("aX ");Serial.print(accx);
-        // Serial.print("\taY ");Serial.print(accy);
-        // Serial.print("\taZ ");Serial.print(accz);
-        // Serial.print("\tTemp ");Serial.print(temp);
-        // Serial.print("\tgX ");Serial.print(gyrox);
-        //      Serial.print("\tgY ");Serial.print(gyroy);
-        //      Serial.print("\tgZ ");Serial.print(gyroz);
-        //      Serial.println();
+        accx = (accbytedata[0] << 8 | accbytedata[1]) >> 7;  // accelerometer x reading, reduced to 8 bit
+        accy = (accbytedata[2] << 8 | accbytedata[3]) >> 7;  // accelerometer y reading, 8 bit
+        accz = (accbytedata[4] << 8 | accbytedata[5]) >> 7;  // accelerometer z reading
+        temp = ((accbytedata[6] << 8 | accbytedata[7]) + TEMP_LSB_OFFSET) / TEMP_LSB_2_DEGREE;
+        // temperature reading
+        gyrox = (accbytedata[8] << 8 | accbytedata[9]) >> 7;    // gyro x reading, reduced to 8 bit
+        gyroy = (accbytedata[10] << 8 | accbytedata[11]) >> 7;  // gyro y reading, 8 bit
+        gyroz = (accbytedata[12] << 8 | accbytedata[13]) >> 7;  // gyro z reading
+
+        // Serial.print("aX ");
+        // Serial.print(accx);
+        // Serial.print("\taY ");
+        // Serial.print(accy);
+        // Serial.print("\taZ ");
+        // Serial.print(accz);
+        // Serial.print("\tTemp ");
+        // Serial.print(temp);
+        // Serial.print("\tgX ");
+        // Serial.print(gyrox);
+        // Serial.print("\tgY ");
+        // Serial.print(gyroy);
+        // Serial.print("\tgZ ");
+        // Serial.print(gyroz);
+        // Serial.println();
         initiate_read_accelero();
-
-        //      aSin.setFreq(432 + accx * 4);
-
-        // switch smoothing on and off to show the difference
-//        if (kSmoothOnOff.ready()) {
-////          if (smoothIsOn) {
-////            aSmoothGain.setSmoothness(0.f);
-////            smoothIsOn = true;
-////          }
-////          else {
-////            aSmoothGain.setSmoothness(smoothness);
-////            smoothIsOn = true;
-////          }
-//          kSmoothOnOff.start();
-//        }
 
         // random volume changes
         if (kGainChangeDelay.ready()) {
-          target_gain = sqrt(((accx * accx) + ( accy * accy)))/2;
+          
+          target_gain = abs(accx) + abs(accy);
+          target_gain = target_gain > 20 ? target_gain : 0;
+          Serial.print("target_gain unmapped: ");
+          Serial.print(target_gain);
+          Serial.println();
+          target_gain = kMapGain(target_gain);
+          Serial.print("target_gain mapped: ");
+          Serial.print(target_gain);
+          Serial.println();
           kGainChangeDelay.start();
         }
 
-        gain = sqrt(((accx * accx) + ( accy * accy))) / 255.0;
-        gain2 = sqrt(((accx * accx) + ( accy * accy))) / 255.0;
 
         break;
       case ACC_WRITING:
-        if ( TWI_MTX != twi_state ) {
+        if (TWI_MTX != twi_state) {
           initiate_request_accelero();
         }
         break;
       case ACC_READING:
-        if ( TWI_MRX != twi_state ) {
+        if (TWI_MRX != twi_state) {
           finalise_request_accelero();
         }
         break;
@@ -224,15 +225,11 @@ void updateControl() {
 }
 
 
-//int16_t updateAudio() {
-//  return (aSin.next() * gain) + (aSin2.next() * gain2);
-//}
 
-
-AudioOutput_t updateAudio(){
-  return MonoOutput::from16Bit(aSmoothGain.next(target_gain) * (aSin.next() + aSin2.next()));
+AudioOutput_t updateAudio() {
+  return MonoOutput::from16Bit(aSmoothGain.next(target_gain) * (aSin.next() / 2 + aSin2.next() / 2));
 }
 
 void loop() {
-  audioHook(); // required here
+  audioHook();  // required here
 }
