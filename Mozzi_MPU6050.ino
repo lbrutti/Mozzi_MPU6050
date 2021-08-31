@@ -121,7 +121,7 @@ void acc_writeTo(byte address, byte val) {
 
 void setup(){
   Serial.begin(115200);
-  while (!Serial) delay(10); // will pause Zero, Leonardo, etc until serial console opens
+  //while (!Serial) delay(10); // will pause Zero, Leonardo, etc until serial console opens
   setup_accelero();
   startMozzi(CONTROL_RATE);
   aSin.setFreq(800);
@@ -181,7 +181,7 @@ void updateControl(){
 }
 
 
-int updateAudio(){
+int16_t updateAudio(){
   return aSin.next() * gain; 
 }
 
